@@ -35,12 +35,12 @@ def find_label(label):
     if "dumped" not in shell("uiautomator", "dump", path):
         return None
     nodes = ET.fromstring(shell("cat", path)).iter("node")
-    return next((node for node in nodes if node.get("text") == label), None)
+    return next((node.attrib for node in nodes if node.get("text") == label), None)
 
 
 def tap_label(label):
     node = wait_for(label, lambda: find_label(label))
-    left, top, right, bottom = map(int, re.findall(r"\d+", node.attrib["bounds"]))
+    left, top, right, bottom = map(int, re.findall(r"\d+", node["bounds"]))
     shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
 
 
@@ -67,7 +67,7 @@ def main(apk):
     time.sleep(2)
     background = sprite_colors()
 
-    shell("am", "start", "-W", "-n", ACTIVITY)
+    print(shell("am", "start", "-W", "-n", ACTIVITY), flush=True)
     tap_label("开启悬浮宠物")
     wait_for("the first rendered pet frame", lambda: find_label("悬浮已开启"))
 
