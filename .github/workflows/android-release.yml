@@ -1,0 +1,68 @@
+name: Android release APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 打包模式
+        type: choice
+        default: upgrade-test
+        options:
+          - upgrade-test
+          - release
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      BUILD_MODE: ${{ inputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-36 build-tools;35.0.0'
+      - name: Build unsigned release APKs
+        run: python3 .github/scripts/release-apks.py build
+      - name: Sign and verify release APKs
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ inputs.mode == 'release' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ inputs.mode == 'release' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ inputs.mode == 'release' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ inputs.mode == 'release' && secrets.ANDROID_KEY_PASSWORD || '' }}
+          ANDROID_SIGNING_CERT_SHA256: ${{ vars.ANDROID_SIGNING_CERT_SHA256 }}
+        run: python3 .github/scripts/release-apks.py sign
+      - name: Enable KVM for the emulator
+        if: inputs.mode == 'upgrade-test'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Verify in-place upgrade on Android 15
+        if: inputs.mode == 'upgrade-test'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: default
+          disable-animations: true
+          emulator-boot-timeout: 300
+          script: >-
+            python3 .github/scripts/smoke-overlay.py
+            "$RUNNER_TEMP/pet-release/signed/upgrade-base-test-only.apk"
+            "$RUNNER_TEMP/pet-release/signed/upgrade-target-test-only.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YeShunguangPet-Android-${{ inputs.mode }}
+          path: ${{ runner.temp }}/pet-release/signed/*.apk
+          if-no-files-found: error

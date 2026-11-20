@@ -148,7 +148,15 @@ def sprite_pixel_count(frame, background):
     return frame[1].count(SPRITE_COLOR) - background[1].count(SPRITE_COLOR)
 
 
-def main(apk):
+def installed_version_code():
+    package_info = shell("dumpsys", "package", PACKAGE)
+    version = re.search(r"\bversionCode=(\d+)\b", package_info)
+    if version is None:
+        raise AssertionError(f"Could not read the installed version code for {PACKAGE}")
+    return int(version.group(1))
+
+
+def main(apk, upgrade_apk=None):
     adb("install", "-r", apk)
     shell("input", "keyevent", "KEYCODE_WAKEUP")
     shell("wm", "dismiss-keyguard")
@@ -266,16 +274,25 @@ def main(apk):
     wait_for("overlay to be available to start again", lambda: find_label("开启悬浮宠物"))
     print("Long-press menu closed the pet; the app is ready to start it again.", flush=True)
 
-    shell("am", "force-stop", PACKAGE)
+    if upgrade_apk:
+        previous_code = installed_version_code()
+        print(adb("install", "-r", upgrade_apk).decode().strip(), flush=True)
+        new_code = installed_version_code()
+        assert new_code == previous_code + 1, f"Unexpected version code: {previous_code} -> {new_code}"
+        print(f"Installed APK update in place: versionCode {previous_code} -> {new_code}.", flush=True)
+        persistence_check = "APK upgrade"
+    else:
+        shell("am", "force-stop", PACKAGE)
+        persistence_check = "process restart"
     shell("am", "start", "-W", "-n", ACTIVITY)
     size_slider(width, height)
-    wait_for("size restored after process restart", lambda: expected_percent(lambda value: value == large_percent))
-    print(f"Saved pet size survived process restart: {large_percent}%.", flush=True)
+    wait_for(f"size restored after {persistence_check}", lambda: expected_percent(lambda value: value == large_percent))
+    print(f"Saved pet size survived {persistence_check}: {large_percent}%.", flush=True)
 
 
 if __name__ == "__main__":
     try:
-        main(sys.argv[1])
+        main(*sys.argv[1:])
     except Exception:
         try:
             hierarchy = shell("cat", "/sdcard/pocket-pet-smoke.xml")

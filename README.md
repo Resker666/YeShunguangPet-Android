@@ -24,3 +24,24 @@
 ```
 
 Windows 可使用 `gradlew.bat`。APK 输出为 `app/build/outputs/apk/debug/app-debug.apk`。可选设置 `HUTAO_COMPAT_ZIP` 为胡桃 v1.4.0 原版 ZIP 的绝对路径，运行额外的实际皮肤兼容测试。
+
+### 在 GitHub Actions 手动打包
+
+打开 [Android release APK](https://github.com/Resker666/YeShunguangPet-Android/actions/workflows/android-release.yml)，点 **Run workflow**，选择 `main` 和打包模式。APK 可以在成功运行的 **Artifacts** 下载。
+
+| 模式 | 产物和验收 |
+| --- | --- |
+| `upgrade-test` | 用同一把临时密钥签署两份 release APK。模拟器安装基础包，将角色调到 666%，再覆盖安装 `versionCode` 加 1 的包，检查设置是否保留。这两份 APK 供当次测试使用。 |
+| `release` | 用固定密钥签署一份 release APK，核对签名证书指纹后上传。 |
+
+运行 `release` 前，在仓库的 **Settings → Secrets and variables → Actions** 中设置以下项目。
+
+| 类型 | 名称 | 内容 |
+| --- | --- | --- |
+| Secret | `ANDROID_KEYSTORE_BASE64` | 固定签名库文件的 Base64 编码 |
+| Secret | `ANDROID_KEYSTORE_PASSWORD` | 签名库密码 |
+| Secret | `ANDROID_KEY_ALIAS` | 签名密钥别名 |
+| Secret | `ANDROID_KEY_PASSWORD` | 签名密钥密码 |
+| Variable | `ANDROID_SIGNING_CERT_SHA256` | 固定签名证书的 SHA-256 指纹，可用 `keytool -list -v -keystore <签名库> -alias <别名>` 查看 |
+
+请在仓库外保管并备份固定签名库。后续发布沿用同一签名和应用 ID，并递增 `versionCode`，才能覆盖已安装的同签名版本。此前用另一把调试密钥签名的 APK 无法由新密钥覆盖。
