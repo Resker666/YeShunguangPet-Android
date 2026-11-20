@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "starlamp",
+  "name": "星灯",
+  "description": "一盏会打招呼的小灯",
+  "spriteSheet": "sprite.png",
+  "cellWidth": 128,
+  "cellHeight": 128,
+  "columns": 6,
+  "rows": 5,
+  "animations": {
+    "idle": {"row": 0, "durationsMs": [320, 180, 320, 190, 100, 620], "loop": true},
+    "waving": {"row": 1, "durationsMs": [100, 120, 120, 120, 120, 180]},
+    "jumping": {"row": 2, "durationsMs": [100, 85, 95, 95, 100, 180]},
+    "runningRight": {"row": 3, "durationsMs": [110, 110, 110, 110, 110, 110], "loop": true},
+    "runningLeft": {"row": 4, "durationsMs": [110, 110, 110, 110, 110, 110], "loop": true}
+  },
+  "speech": {"click": ["我在这儿。", "亮一小会儿。", "慢慢来。"]}
+}
