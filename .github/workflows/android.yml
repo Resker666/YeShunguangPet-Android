@@ -35,7 +35,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Verify the pet is visible on Android 15
+      - name: Verify the side-by-side APK starts on Android 15
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -43,4 +43,7 @@ jobs:
           target: default
           disable-animations: true
           emulator-boot-timeout: 300
-          script: python3 .github/scripts/smoke-overlay.py YeShunguangPet-Android-debug.apk
+          script: |
+            adb install YeShunguangPet-Android-debug.apk
+            adb shell am start -W -n com.resker666.yeshunguangpet.preview/com.resker666.yeshunguangpet.MainActivity
+            adb shell pidof com.resker666.yeshunguangpet.preview

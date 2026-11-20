@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">叶瞬光口袋宠物</string>
+    <string name="app_name">口袋宠物体验版</string>
     <string name="notification_channel">悬浮宠物运行状态</string>
     <string name="notification_title">口袋宠物正在陪伴你</string>
     <string name="notification_body">点按返回应用，或直接收起宠物</string>

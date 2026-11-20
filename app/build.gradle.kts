@@ -8,7 +8,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.resker666.yeshunguangpet"
+        applicationId = "com.resker666.yeshunguangpet.preview"
         minSdk = 26
         targetSdk = 36
         versionCode = 6
