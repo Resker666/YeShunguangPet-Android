@@ -19,11 +19,14 @@ import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -48,20 +51,27 @@ internal class PetOverlayService : Service() {
     private var watching = false
     private var generation = 0
     private var destroyed = false
+    private var foreground = false
     private var screenReceiverRegistered = false
     private lateinit var mainHandler: Handler
     private val selectionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == SkinStore.SELECTED_ID && !destroyed) loadSprite()
     }
     private val clearBubble = Runnable { bubble?.visibility = View.INVISIBLE }
+    private val firstFrameTimeout = Runnable {
+        if (app.overlayStatus == OverlayStatus.STARTING && root?.visibility == View.VISIBLE) {
+            Log.w(TAG, "Pet overlay did not draw its first frame")
+            fail(OverlayStatus.WINDOW_ERROR)
+        }
+    }
     private val permissionListener = AppOpsManager.OnOpChangedListener { _, _ ->
         mainHandler.post {
-            if (!destroyed && !Settings.canDrawOverlays(this)) stopSelf()
+            if (!destroyed && !Settings.canDrawOverlays(this)) fail(OverlayStatus.NEEDS_PERMISSION)
         }
     }
     private val screenChanges = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            val unlocked = !getSystemService(KeyguardManager::class.java).isKeyguardLocked
+            val unlocked = !getSystemService(KeyguardManager::class.java).isDeviceLocked
             when (intent.action) {
                 Intent.ACTION_SCREEN_OFF -> root?.visibility = View.INVISIBLE
                 Intent.ACTION_USER_PRESENT -> updatePositionAndShow()
@@ -73,47 +83,67 @@ internal class PetOverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         mainHandler = Handler(mainLooper)
-        overlayContext = if (Build.VERSION.SDK_INT >= 30) {
-            createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
-        } else this
-        manager = overlayContext.getSystemService(WindowManager::class.java)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        if (action == STOP || action == null || !Settings.canDrawOverlays(this)) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
-        try {
-            if (root == null) {
-                val notification = buildNotification()
-                if (Build.VERSION.SDK_INT >= 34) {
-                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
-                }
-                attachWindow()
-            }
-            loadSprite()
-        } catch (failure: RuntimeException) {
-            Log.w(TAG, "Could not start pet overlay", failure)
-            stopSelf()
+        when (intent?.action) {
+            STOP, null -> stopSelf()
+            RECALL -> recall()
+            START -> startOverlay()
         }
         return START_NOT_STICKY
     }
 
+    private fun startOverlay() {
+        if (!Settings.canDrawOverlays(this)) {
+            fail(OverlayStatus.NEEDS_PERMISSION)
+            return
+        }
+        if (foreground) return
+        app.overlayStatus = OverlayStatus.STARTING
+        try {
+            val notification = buildNotification()
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+            foreground = true
+            loadSprite()
+        } catch (failure: RuntimeException) {
+            Log.w(TAG, "Could not start pet overlay", failure)
+            fail(OverlayStatus.WINDOW_ERROR)
+        }
+    }
+
+    private fun fail(status: OverlayStatus) {
+        app.overlayStatus = status
+        stopSelf()
+    }
+
     @Suppress("RtlHardcoded")
     private fun attachWindow() {
+        overlayContext = if (Build.VERSION.SDK_INT >= 30) {
+            val displayManager = getSystemService(DisplayManager::class.java)
+            val display = checkNotNull(displayManager.getDisplay(Display.DEFAULT_DISPLAY)) {
+                "Primary display is unavailable"
+            }
+            createDisplayContext(display).createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+        } else this
+        manager = overlayContext.getSystemService(WindowManager::class.java)
+
         layout = WindowManager.LayoutParams(
             dp(132), dp(152),
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT,
-        ).apply { gravity = Gravity.TOP or Gravity.LEFT }
+        ).apply {
+            gravity = Gravity.TOP or Gravity.LEFT
+            setTitle("PocketPetOverlay")
+        }
 
         if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0)
         applySavedPosition()
@@ -148,11 +178,19 @@ internal class PetOverlayService : Service() {
         }
         panel.addView(close, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP or Gravity.RIGHT))
 
+        val interactive = getSystemService(PowerManager::class.java).isInteractive
+        val locked = getSystemService(KeyguardManager::class.java).isDeviceLocked
+        if (!interactive || locked) panel.visibility = View.INVISIBLE
+        sprite.onFirstFrame = {
+            if (!destroyed && app.overlayStatus == OverlayStatus.STARTING) {
+                mainHandler.removeCallbacks(firstFrameTimeout)
+                app.overlayStatus = OverlayStatus.RUNNING
+            }
+        }
         manager.addView(panel, layout)
         root = panel
         pet = sprite
         bubble = dialogue
-        if (getSystemService(KeyguardManager::class.java).isKeyguardLocked) panel.visibility = View.INVISIBLE
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -165,7 +203,6 @@ internal class PetOverlayService : Service() {
             .startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, permissionListener)
         watching = true
         store.prefs.registerOnSharedPreferenceChangeListener(selectionListener)
-        app.overlayRunning = true
     }
 
     private fun loadSprite() {
@@ -173,17 +210,43 @@ internal class PetOverlayService : Service() {
         app.worker.execute {
             val result = runCatching { store.selectedSprite() }
             mainHandler.post {
-                if (!destroyed && ticket == generation) {
-                    result.onSuccess { asset ->
-                        pet?.show(asset)
-                        pet?.contentDescription = asset.skin.manifest.name
-                    }.onFailure { error ->
-                        Log.w(TAG, "Could not load pet sprite", error)
-                        stopSelf()
+                if (destroyed || ticket != generation) return@post
+                result.onSuccess { asset ->
+                    try {
+                        if (root == null) attachWindow()
+                        checkNotNull(pet).apply {
+                            show(asset)
+                            contentDescription = asset.skin.manifest.name
+                        }
+                        scheduleFirstFrameTimeout()
+                    } catch (failure: RuntimeException) {
+                        Log.w(TAG, "Could not attach pet overlay to the display", failure)
+                        fail(OverlayStatus.WINDOW_ERROR)
                     }
+                }.onFailure { error ->
+                    Log.w(TAG, "Could not load pet sprite", error)
+                    fail(OverlayStatus.SPRITE_ERROR)
                 }
             }
         }
+    }
+
+    private fun scheduleFirstFrameTimeout() {
+        if (app.overlayStatus != OverlayStatus.STARTING || root?.visibility != View.VISIBLE) return
+        mainHandler.removeCallbacks(firstFrameTimeout)
+        mainHandler.postDelayed(firstFrameTimeout, 6_000)
+    }
+
+    private fun recall() {
+        if (root == null) {
+            if (!foreground) stopSelf()
+            return
+        }
+        val area = bounds()
+        val x = area.centerX() - layout.width / 2
+        val y = area.centerY() - layout.height / 2
+        setPosition(x, y)
+        savePosition()
     }
 
     @Suppress("ClickableViewAccessibility")
@@ -265,7 +328,7 @@ internal class PetOverlayService : Service() {
         val area = bounds()
         val usableX = (area.width() - layout.width).coerceAtLeast(0)
         val usableY = (area.height() - layout.height).coerceAtLeast(0)
-        layout.x = area.left + (usableX * store.prefs.getFloat("petX", .92f)).roundToInt()
+        layout.x = area.left + (usableX * store.prefs.getFloat("petX", .72f)).roundToInt()
         layout.y = area.top + (usableY * store.prefs.getFloat("petY", .68f)).roundToInt()
     }
 
@@ -286,12 +349,13 @@ internal class PetOverlayService : Service() {
     private fun updatePositionAndShow() {
         val view = root ?: return
         if (!Settings.canDrawOverlays(this)) {
-            stopSelf()
+            fail(OverlayStatus.NEEDS_PERMISSION)
             return
         }
         applySavedPosition()
         view.visibility = View.VISIBLE
         updateWindow()
+        scheduleFirstFrameTimeout()
     }
 
     private fun updateWindow() {
@@ -300,7 +364,7 @@ internal class PetOverlayService : Service() {
             manager.updateViewLayout(view, layout)
         } catch (error: RuntimeException) {
             Log.w(TAG, "Could not update pet overlay", error)
-            stopSelf()
+            fail(OverlayStatus.WINDOW_ERROR)
         }
     }
 
@@ -331,6 +395,7 @@ internal class PetOverlayService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        mainHandler.removeCallbacksAndMessages(null)
         if (watching) {
             store.prefs.unregisterOnSharedPreferenceChangeListener(selectionListener)
             getSystemService(AppOpsManager::class.java).stopWatchingMode(permissionListener)
@@ -341,8 +406,8 @@ internal class PetOverlayService : Service() {
         root = null
         pet = null
         bubble = null
-        app.overlayRunning = false
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (app.overlayStatus.active) app.overlayStatus = OverlayStatus.STOPPED
+        if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
@@ -355,6 +420,7 @@ internal class PetOverlayService : Service() {
 
     companion object {
         const val START = "pet.overlay.START"
+        const val RECALL = "pet.overlay.RECALL"
         private const val STOP = "pet.overlay.STOP"
         private const val CHANNEL_ID = "pet_overlay"
         private const val NOTIFICATION_ID = 101

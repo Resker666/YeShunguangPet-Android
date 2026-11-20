@@ -32,6 +32,7 @@ internal class PetSpriteView(context: Context) : View(context) {
     private var clip = "idle"
     private var started = SystemClock.uptimeMillis()
     private var alternateTap = false
+    var onFirstFrame: (() -> Unit)? = null
 
     fun show(sprite: Sprite?) {
         this.sprite = sprite
@@ -86,6 +87,13 @@ internal class PetSpriteView(context: Context) : View(context) {
         val y = (height - spriteHeight) / 2
         destination.set(x, y, x + spriteWidth, y + spriteHeight)
         canvas.drawBitmap(asset.bitmap, source, destination, paint)
+        if (windowVisibility == VISIBLE && isShown) {
+            val firstFrame = onFirstFrame
+            if (firstFrame != null) {
+                onFirstFrame = null
+                post { firstFrame() }
+            }
+        }
         removeCallbacks(refresh)
         if (windowVisibility == VISIBLE && isShown && (animation.durationsMs.size > 1 || !animation.loop)) {
             postDelayed(refresh, frame.remainingMs)

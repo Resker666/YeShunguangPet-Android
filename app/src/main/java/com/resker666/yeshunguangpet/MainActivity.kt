@@ -33,6 +33,7 @@ internal class MainActivity : Activity() {
     private lateinit var heroCaption: TextView
     private lateinit var overlayState: TextView
     private lateinit var overlayButton: TextView
+    private lateinit var recallButton: TextView
     private lateinit var importButton: TextView
     private lateinit var message: TextView
     private lateinit var library: LinearLayout
@@ -57,7 +58,8 @@ internal class MainActivity : Activity() {
 
     override fun onPostResume() {
         super.onPostResume()
-        if (!Settings.canDrawOverlays(this) && app.overlayRunning) {
+        if (!Settings.canDrawOverlays(this) && app.overlayStatus.active) {
+            app.overlayStatus = OverlayStatus.NEEDS_PERMISSION
             stopService(overlayIntent)
         }
         updateOverlayState()
@@ -135,6 +137,12 @@ internal class MainActivity : Activity() {
         overlayCard.append(overlayState)
         overlayButton = button("", primary = true) { toggleOverlay() }
         overlayCard.append(overlayButton, 11)
+        recallButton = button("找回角色", primary = false) {
+            if (app.overlayStatus == OverlayStatus.RUNNING) {
+                startService(Intent(overlayIntent).setAction(PetOverlayService.RECALL))
+            }
+        }
+        overlayCard.append(recallButton, 8)
         updateOverlayState()
 
         val skinHeading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -197,7 +205,7 @@ internal class MainActivity : Activity() {
     }
 
     private fun toggleOverlay() {
-        if (app.overlayRunning) {
+        if (app.overlayStatus.active) {
             stopService(overlayIntent)
             return
         }
@@ -231,20 +239,39 @@ internal class MainActivity : Activity() {
     }
 
     private fun startOverlay() {
-        if (!Settings.canDrawOverlays(this)) return
+        if (app.overlayStatus.active) return
+        if (!Settings.canDrawOverlays(this)) {
+            app.overlayStatus = OverlayStatus.NEEDS_PERMISSION
+            return
+        }
+        app.overlayStatus = OverlayStatus.STARTING
         try {
             startForegroundService(overlayIntent)
-        } catch (error: IllegalStateException) {
-            showMessage("悬浮宠物未能开启，请留在此页面再试一次。")
-        } catch (error: SecurityException) {
-            showMessage("系统暂时无法启动悬浮宠物，请检查悬浮窗权限。")
+        } catch (_: IllegalStateException) {
+            app.overlayStatus = OverlayStatus.WINDOW_ERROR
+        } catch (_: SecurityException) {
+            app.overlayStatus = OverlayStatus.WINDOW_ERROR
         }
     }
 
     private fun updateOverlayState() {
-        val enabled = app.overlayRunning
-        overlayState.text = if (enabled) "悬浮已开启" else "切到其他应用时也能陪你"
-        overlayButton.text = if (enabled) "收起悬浮宠物" else "开启悬浮宠物"
+        val status = app.overlayStatus
+        overlayState.text = when (status) {
+            OverlayStatus.STOPPED -> if (Settings.canDrawOverlays(this)) {
+                "已授权，点击下方按钮显示宠物"
+            } else "切到其他应用时也能陪你"
+            OverlayStatus.STARTING -> "正在显示宠物…"
+            OverlayStatus.RUNNING -> "悬浮已开启"
+            OverlayStatus.NEEDS_PERMISSION -> "请在系统设置中允许显示悬浮窗"
+            OverlayStatus.WINDOW_ERROR -> "悬浮窗未能显示，请在此页重新开启"
+            OverlayStatus.SPRITE_ERROR -> "当前皮肤无法显示，请在皮肤库切换角色"
+        }
+        overlayButton.text = when (status) {
+            OverlayStatus.RUNNING -> "收起悬浮宠物"
+            OverlayStatus.STARTING -> "取消开启"
+            else -> "开启悬浮宠物"
+        }
+        recallButton.visibility = if (status == OverlayStatus.RUNNING) View.VISIBLE else View.GONE
     }
 
     private fun openPicker() {

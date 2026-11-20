@@ -10,11 +10,17 @@ import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 
+internal enum class OverlayStatus {
+    STOPPED, STARTING, RUNNING, NEEDS_PERMISSION, WINDOW_ERROR, SPRITE_ERROR;
+
+    val active: Boolean get() = this == STARTING || this == RUNNING
+}
+
 internal class PetApplication : Application() {
     val store by lazy { SkinStore(this) }
     val worker = Executors.newSingleThreadExecutor()
     val overlayListeners = mutableSetOf<() -> Unit>()
-    var overlayRunning = false
+    var overlayStatus = OverlayStatus.STOPPED
         set(value) {
             if (field == value) return
             field = value
