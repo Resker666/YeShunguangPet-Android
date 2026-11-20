@@ -56,6 +56,7 @@ internal class MainActivity : Activity() {
     override fun onStart() {
         super.onStart()
         app.overlayListeners.add(overlayChanged)
+        app.settingsVisible = true
         reload()
     }
 
@@ -88,6 +89,7 @@ internal class MainActivity : Activity() {
     override fun onStop() {
         generation++
         app.overlayListeners.remove(overlayChanged)
+        app.settingsVisible = false
         preview.show(null)
         super.onStop()
     }
@@ -167,36 +169,54 @@ internal class MainActivity : Activity() {
 
     private fun buildSizeControl(): LinearLayout {
         val initial = store.overlaySizePercent
-        val value = text(getString(R.string.pet_size_value, initial), 14, TEAL, bold = true).apply {
+        val value = text("", 14, TEAL, bold = true).apply {
             id = R.id.pet_size_value
+            gravity = Gravity.CENTER
         }
         val title = text(getString(R.string.pet_size), 14, BRIGHT_MUTED, bold = true).apply {
             labelFor = R.id.pet_size_slider
         }
-        val labels = LinearLayout(this).apply {
-            addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-            addView(value, LinearLayout.LayoutParams(-2, -2))
-        }
         val slider = SeekBar(this).apply {
             id = R.id.pet_size_slider
-            max = (SkinStore.MAX_OVERLAY_SIZE - SkinStore.MIN_OVERLAY_SIZE) / SIZE_STEP
-            progress = (initial - SkinStore.MIN_OVERLAY_SIZE) / SIZE_STEP
+            min = SkinStore.MIN_OVERLAY_SIZE
+            max = SkinStore.MAX_OVERLAY_SIZE
+            progress = initial
             keyProgressIncrement = 1
             progressTintList = ColorStateList.valueOf(TEAL)
             thumbTintList = ColorStateList.valueOf(TEAL)
-            if (Build.VERSION.SDK_INT >= 30) stateDescription = value.text
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    if (!fromUser) return
-                    val percent = SkinStore.MIN_OVERLAY_SIZE + progress * SIZE_STEP
-                    value.text = getString(R.string.pet_size_value, percent)
-                    if (Build.VERSION.SDK_INT >= 30) seekBar.stateDescription = value.text
-                    store.overlaySizePercent = percent
-                }
+        }
+        val decrease = button("−", primary = false) { slider.progress-- }.apply {
+            id = R.id.pet_size_decrease
+            contentDescription = getString(R.string.pet_size_decrease)
+        }
+        val increase = button("+", primary = false) { slider.progress++ }.apply {
+            id = R.id.pet_size_increase
+            contentDescription = getString(R.string.pet_size_increase)
+        }
+        fun showPercent(percent: Int) {
+            value.text = getString(R.string.pet_size_value, percent)
+            if (Build.VERSION.SDK_INT >= 30) slider.stateDescription = value.text
+            decrease.isEnabled = percent > slider.min
+            increase.isEnabled = percent < slider.max
+            decrease.alpha = if (decrease.isEnabled) 1f else .4f
+            increase.alpha = if (increase.isEnabled) 1f else .4f
+        }
+        showPercent(initial)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                showPercent(progress)
+                store.overlaySizePercent = progress
+            }
 
-                override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
-                override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
-            })
+            override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+            override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+        })
+        val labels = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(decrease, LinearLayout.LayoutParams(dp(48), dp(48)))
+            addView(value, LinearLayout.LayoutParams(dp(58), -2))
+            addView(increase, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -442,7 +462,6 @@ internal class MainActivity : Activity() {
         private const val IMPORT_SKIN = 10
         private const val OVERLAY_PERMISSION = 11
         private const val NOTIFICATION_PERMISSION = 12
-        private const val SIZE_STEP = 5
         private val BACKGROUND = 0xFF101722.toInt()
         private val CARD = 0xFF182332.toInt()
         private val SELECTED = 0xFF223940.toInt()

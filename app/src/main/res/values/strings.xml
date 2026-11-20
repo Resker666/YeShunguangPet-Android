@@ -6,4 +6,6 @@
     <string name="stop_pet">收起宠物</string>
     <string name="pet_size">角色大小</string>
     <string name="pet_size_value">%1$d%%</string>
+    <string name="pet_size_decrease">缩小 1%</string>
+    <string name="pet_size_increase">放大 1%</string>
 </resources>

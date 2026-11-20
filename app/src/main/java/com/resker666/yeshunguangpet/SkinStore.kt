@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Rect
 import android.net.Uri
 import java.io.File
 import java.nio.file.Files
@@ -20,6 +21,12 @@ internal class PetApplication : Application() {
     val store by lazy { SkinStore(this) }
     val worker = Executors.newSingleThreadExecutor()
     val overlayListeners = mutableSetOf<() -> Unit>()
+    var settingsVisible = false
+        set(value) {
+            if (field == value) return
+            field = value
+            overlayListeners.toList().forEach { it() }
+        }
     var overlayStatus = OverlayStatus.STOPPED
         set(value) {
             if (field == value) return
@@ -29,7 +36,11 @@ internal class PetApplication : Application() {
 }
 
 internal data class Skin(val manifest: SkinManifest, val directory: File? = null)
-internal data class Sprite(val skin: Skin, val bitmap: Bitmap)
+internal data class Sprite(
+    val skin: Skin,
+    val bitmap: Bitmap,
+    val clipBounds: Map<String, Rect>,
+)
 internal data class ImportedSkin(val skin: Skin, val alreadyInstalled: Boolean)
 
 internal class SkinStore(private val context: Context) {
@@ -73,7 +84,26 @@ internal class SkinStore(private val context: Context) {
                 context.assets.open("starter/sprite.png").use { BitmapFactory.decodeStream(it, null, options) }
             } else null
         val decoded = bitmap ?: throw SkinFormatException("无法读取皮肤精灵图")
-        return Sprite(skin, decoded).also { cached = it }
+        val manifest = skin.manifest
+        checkFormat(decoded.width == manifest.width && decoded.height == manifest.height, "精灵图尺寸不匹配")
+        val scanline = IntArray(manifest.cellWidth)
+        val bounds = manifest.animations.mapValues { (_, animation) ->
+            val visible = Rect()
+            val top = animation.row * manifest.cellHeight
+            for (index in animation.durationsMs.indices) {
+                val left = (animation.startColumn + index) * manifest.cellWidth
+                for (y in 0 until manifest.cellHeight) {
+                    decoded.getPixels(scanline, 0, scanline.size, left, top + y, scanline.size, 1)
+                    val first = scanline.indexOfFirst { it ushr 24 != 0 }
+                    if (first == -1) continue
+                    val last = scanline.indexOfLast { it ushr 24 != 0 }
+                    visible.union(first, y, last + 1, y + 1)
+                }
+            }
+            if (visible.isEmpty) visible.set(0, 0, manifest.cellWidth, manifest.cellHeight)
+            visible
+        }
+        return Sprite(skin, decoded, bounds).also { cached = it }
     }
 
     fun import(uri: Uri): ImportedSkin {
@@ -138,6 +168,6 @@ internal class SkinStore(private val context: Context) {
         const val SELECTED_ID = "selected"
         const val OVERLAY_SIZE_PERCENT = "overlaySizePercent"
         const val MIN_OVERLAY_SIZE = 50
-        const val MAX_OVERLAY_SIZE = 200
+        const val MAX_OVERLAY_SIZE = 666
     }
 }

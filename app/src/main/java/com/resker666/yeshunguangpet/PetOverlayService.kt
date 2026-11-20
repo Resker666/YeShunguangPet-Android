@@ -64,6 +64,9 @@ internal class PetOverlayService : Service() {
             SkinStore.OVERLAY_SIZE_PERCENT -> resizeOverlay()
         }
     }
+    private val settingsVisibilityChanged: () -> Unit = {
+        if (root != null && applyInputMode()) updateWindow()
+    }
     private val clearBubble = Runnable { bubble?.visibility = View.INVISIBLE }
     private val dismissMenu = Runnable { closeMenu?.visibility = View.GONE }
     private val firstFrameTimeout = Runnable {
@@ -135,7 +138,7 @@ internal class PetOverlayService : Service() {
     }
 
     @Suppress("RtlHardcoded")
-    private fun attachWindow() {
+    private fun attachWindow(asset: Sprite) {
         overlayContext = if (Build.VERSION.SDK_INT >= 30) {
             val displayManager = getSystemService(DisplayManager::class.java)
             val display = checkNotNull(displayManager.getDisplay(Display.DEFAULT_DISPLAY)) {
@@ -211,7 +214,10 @@ internal class PetOverlayService : Service() {
                 app.overlayStatus = OverlayStatus.RUNNING
             }
         }
+        sprite.show(asset)
+        sprite.contentDescription = asset.skin.manifest.name
         applySavedLayout(sprite)
+        applyInputMode()
         manager.addView(panel, layout)
         root = panel
         pet = sprite
@@ -229,6 +235,7 @@ internal class PetOverlayService : Service() {
             .startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, permissionListener)
         watching = true
         store.prefs.registerOnSharedPreferenceChangeListener(preferencesListener)
+        app.overlayListeners.add(settingsVisibilityChanged)
     }
 
     private fun loadSprite() {
@@ -239,10 +246,13 @@ internal class PetOverlayService : Service() {
                 if (destroyed || ticket != generation) return@post
                 result.onSuccess { asset ->
                     try {
-                        if (root == null) attachWindow()
-                        checkNotNull(pet).apply {
-                            show(asset)
-                            contentDescription = asset.skin.manifest.name
+                        val sprite = pet
+                        if (sprite == null) {
+                            attachWindow(asset)
+                        } else {
+                            sprite.show(asset)
+                            sprite.contentDescription = asset.skin.manifest.name
+                            resizeOverlay()
                         }
                         scheduleFirstFrameTimeout()
                     } catch (failure: RuntimeException) {
@@ -383,13 +393,25 @@ internal class PetOverlayService : Service() {
         val topSpace = dp(32).coerceAtMost(heightLimit - 1)
         val baseWidth = dp(122)
         val baseHeight = dp(120)
-        val scale = minOf(
-            store.overlaySizePercent / 100f,
-            (widthLimit - sideSpace).toFloat() / baseWidth,
-            (heightLimit - topSpace).toFloat() / baseHeight,
+        val requestedScale = store.overlaySizePercent / 100f
+        val frameWidth = widthLimit - sideSpace
+        val frameHeight = heightLimit - topSpace
+        val idleBounds = checkNotNull(sprite.idleBounds)
+        val baseSpriteScale = minOf(baseWidth.toFloat() / sprite.cellWidth, baseHeight.toFloat() / sprite.cellHeight)
+        val sizeMultiplier = minOf(
+            requestedScale,
+            frameWidth / (idleBounds.width() * baseSpriteScale),
+            frameHeight / (idleBounds.height() * baseSpriteScale),
         )
-        val width = (baseWidth * scale).roundToInt().coerceIn(1, widthLimit - sideSpace)
-        val height = (baseHeight * scale).roundToInt().coerceIn(1, heightLimit - topSpace)
+        val nominalWidth = (baseWidth * sizeMultiplier).roundToInt().coerceAtLeast(1)
+        val nominalHeight = (baseHeight * sizeMultiplier).roundToInt().coerceAtLeast(1)
+        val width = nominalWidth.coerceAtMost(frameWidth)
+        val height = nominalHeight.coerceAtMost(frameHeight)
+        sprite.overlayScale = if (width < nominalWidth || height < nominalHeight) {
+            baseSpriteScale * sizeMultiplier
+        } else {
+            null
+        }
         val params = sprite.layoutParams
         if (params.width != width || params.height != height) {
             params.width = width
@@ -414,9 +436,18 @@ internal class PetOverlayService : Service() {
 
     private fun savePosition() {
         val area = bounds()
-        val x = (layout.x - area.left).toFloat() / maxOf(1, area.width() - layout.width)
-        val y = (layout.y - area.top).toFloat() / maxOf(1, area.height() - layout.height)
-        store.prefs.edit().putFloat("petX", x.coerceIn(0f, 1f)).putFloat("petY", y.coerceIn(0f, 1f)).apply()
+        val travelX = area.width() - layout.width
+        val travelY = area.height() - layout.height
+        val editor = store.prefs.edit()
+        if (travelX > 0) {
+            val x = (layout.x - area.left).toFloat() / travelX
+            editor.putFloat("petX", x.coerceIn(0f, 1f))
+        }
+        if (travelY > 0) {
+            val y = (layout.y - area.top).toFloat() / travelY
+            editor.putFloat("petY", y.coerceIn(0f, 1f))
+        }
+        editor.apply()
     }
 
     private fun updatePositionAndShow() {
@@ -431,9 +462,21 @@ internal class PetOverlayService : Service() {
         scheduleFirstFrameTimeout()
     }
 
+    private fun applyInputMode(): Boolean {
+        val editingLargePet = app.settingsVisible && store.overlaySizePercent > 200
+        val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val flags = if (editingLargePet) layout.flags or flag else layout.flags and flag.inv()
+        val alpha = if (editingLargePet) 0.28f else 1f
+        if (layout.flags == flags && layout.alpha == alpha) return false
+        layout.flags = flags
+        layout.alpha = alpha
+        return true
+    }
+
     private fun updateWindow() {
         val view = root ?: return
         try {
+            applyInputMode()
             manager.updateViewLayout(view, layout)
         } catch (error: RuntimeException) {
             Log.w(TAG, "Could not update pet overlay", error)
@@ -469,6 +512,7 @@ internal class PetOverlayService : Service() {
     override fun onDestroy() {
         destroyed = true
         mainHandler.removeCallbacksAndMessages(null)
+        app.overlayListeners.remove(settingsVisibilityChanged)
         if (watching) {
             store.prefs.unregisterOnSharedPreferenceChangeListener(preferencesListener)
             getSystemService(AppOpsManager::class.java).stopWatchingMode(permissionListener)

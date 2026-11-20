@@ -47,10 +47,17 @@ def node_bounds(node):
     return tuple(map(int, re.findall(r"\d+", node["bounds"])))
 
 
-def tap_label(label):
-    node = wait_for(label, lambda: find_label(label))
+def tap_node(node):
     left, top, right, bottom = node_bounds(node)
     shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
+
+
+def tap_label(label):
+    tap_node(wait_for(label, lambda: find_label(label)))
+
+
+def tap_control(name):
+    tap_node(wait_for(name, lambda: find_node("resource-id", f"{PACKAGE}:id/{name}")))
 
 
 def screenshot():
@@ -62,12 +69,13 @@ def screenshot():
     return width, raw[start:]
 
 
-def color_center(color, before, after):
+def color_region(color, before, after):
     width, pixels = after
     previous_width, previous_pixels = before
     assert width == previous_width and len(pixels) == len(previous_pixels), "Screen bounds changed"
     offset = 0
     count = x_sum = y_sum = 0
+    left, right = width, 0
     while (match := pixels.find(color, offset)) != -1:
         offset = match + 1
         if match % 4 or previous_pixels[match:match + 4] == color:
@@ -76,8 +84,9 @@ def color_center(color, before, after):
         count += 1
         x_sum += x
         y_sum += y
+        left, right = min(left, x), max(right, x)
     if count >= 20:
-        return x_sum // count, y_sum // count
+        return x_sum // count, y_sum // count, right - left + 1
     return None
 
 
@@ -141,20 +150,20 @@ def main(apk):
 
     def rendered_on_home():
         frame = screenshot()
-        position = color_center(SPRITE_COLOR, background, frame)
+        position = color_region(SPRITE_COLOR, background, frame)
         if position and has_window():
             return position, frame
         return None
 
-    (x, y), default_frame = wait_for("pet pixels and overlay window on Android Home", rendered_on_home)
+    (x, y, _), default_frame = wait_for("pet pixels and overlay window on Android Home", rendered_on_home)
     default_pixels = sprite_pixel_count(default_frame, background)
     print(f"Pet sprite rendered over the home screen at ({x}, {y}).", flush=True)
-    assert color_center(MENU_COLOR, background, default_frame) is None, "Menu is visible before long press"
+    assert color_region(MENU_COLOR, background, default_frame) is None, "Menu is visible before long press"
 
     # Move the pet to the top edge so its touch area does not cover the slider.
     shell("input", "swipe", str(x), str(y), str(width // 5), str(height // 7), "280")
 
-    def resize_on_home(track_fraction, percent_matches, pixels_match):
+    def resize_on_home(track_fraction, percent_matches, fits_frame):
         shell("am", "start", "-W", "-n", ACTIVITY)
         percent = set_size(width, height, track_fraction, percent_matches)
         shell("input", "keyevent", "KEYCODE_HOME")
@@ -162,21 +171,36 @@ def main(apk):
 
         def resized():
             visible = rendered_on_home()
-            if visible and pixels_match(sprite_pixel_count(visible[1], background)):
+            if visible and fits_frame(visible):
                 return visible
             return None
 
         (position, frame) = wait_for(f"live overlay resize to {percent}%", resized)
-        print(f"Pet resized to {percent}% ({sprite_pixel_count(frame, background)} pixels).", flush=True)
+        print(f"Pet resized to {percent}% ({position[2]} px across its blue pixels).", flush=True)
         return percent, position, frame
 
-    resize_on_home(0.10, lambda value: value <= 75, lambda pixels: pixels < default_pixels * 0.8)
-    large_percent, (x, y), idle_frame = resize_on_home(
-        0.93, lambda value: value >= 165, lambda pixels: pixels > default_pixels * 1.5,
+    resize_on_home(
+        0.05, lambda value: value <= 75,
+        lambda visible: sprite_pixel_count(visible[1], background) < default_pixels * 0.8,
+    )
+    large_percent, _, _ = resize_on_home(
+        0.99, lambda value: value == 666,
+        lambda visible: visible[0][2] >= width * 0.78,
     )
 
+    shell("am", "start", "-W", "-n", ACTIVITY)
+    size_slider(width, height)
+    tap_control("pet_size_decrease")
+    wait_for("one percent decrease", lambda: expected_percent(lambda value: value == 665))
+    tap_control("pet_size_increase")
+    wait_for("one percent increase", lambda: expected_percent(lambda value: value == 666))
+    print("Size buttons adjusted 666% to 665% and back while the large pet was active.", flush=True)
+    shell("input", "keyevent", "KEYCODE_HOME")
+    time.sleep(0.7)
+    (x, y, _), idle_frame = wait_for("large pet on Android Home", rendered_on_home)
+
     shell("input", "swipe", str(x), str(y), str(x), str(y), "850")
-    menu_x, menu_y = wait_for("menu after long press", lambda: color_center(MENU_COLOR, idle_frame, screenshot()))
+    menu_x, menu_y, _ = wait_for("menu after long press", lambda: color_region(MENU_COLOR, idle_frame, screenshot()))
     shell("input", "tap", str(menu_x), str(menu_y))
     wait_for("the overlay window to be removed by the long-press menu", lambda: not has_window())
 

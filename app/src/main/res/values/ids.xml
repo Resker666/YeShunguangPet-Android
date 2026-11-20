@@ -1,4 +1,6 @@
 <resources>
     <item type="id" name="pet_size_slider" />
     <item type="id" name="pet_size_value" />
+    <item type="id" name="pet_size_decrease" />
+    <item type="id" name="pet_size_increase" />
 </resources>

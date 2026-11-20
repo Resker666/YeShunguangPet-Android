@@ -33,6 +33,15 @@ internal class PetSpriteView(context: Context) : View(context) {
     private var started = SystemClock.uptimeMillis()
     private var alternateTap = false
     var onFirstFrame: (() -> Unit)? = null
+    val idleBounds: Rect? get() = sprite?.clipBounds?.get("idle")
+    val cellWidth: Int get() = sprite?.skin?.manifest?.cellWidth ?: 1
+    val cellHeight: Int get() = sprite?.skin?.manifest?.cellHeight ?: 1
+    var overlayScale: Float? = null
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
 
     fun show(sprite: Sprite?) {
         this.sprite = sprite
@@ -81,11 +90,21 @@ internal class PetSpriteView(context: Context) : View(context) {
         val left = (animation.startColumn + frame.index) * manifest.cellWidth
         val top = animation.row * manifest.cellHeight
         source.set(left, top, left + manifest.cellWidth, top + manifest.cellHeight)
-        val scale = min(width.toFloat() / manifest.cellWidth, height.toFloat() / manifest.cellHeight)
+        val clipBounds = asset.clipBounds.getValue(clip)
+        val preferredScale = overlayScale
+        val scale = if (preferredScale == null) {
+            min(width.toFloat() / manifest.cellWidth, height.toFloat() / manifest.cellHeight)
+        } else {
+            minOf(preferredScale, width.toFloat() / clipBounds.width(), height.toFloat() / clipBounds.height())
+        }
         val spriteWidth = manifest.cellWidth * scale
         val spriteHeight = manifest.cellHeight * scale
-        val x = (width - spriteWidth) / 2
-        val y = (height - spriteHeight) / 2
+        var x = (width - spriteWidth) / 2
+        var y = (height - spriteHeight) / 2
+        if (preferredScale != null) {
+            x = x.coerceAtLeast(-clipBounds.left * scale).coerceAtMost(width - clipBounds.right * scale)
+            y = y.coerceAtLeast(-clipBounds.top * scale).coerceAtMost(height - clipBounds.bottom * scale)
+        }
         destination.set(x, y, x + spriteWidth, y + spriteHeight)
         canvas.drawBitmap(asset.bitmap, source, destination, paint)
         if (windowVisibility == VISIBLE && isShown) {
