@@ -1,0 +1,4 @@
+<resources>
+    <item type="id" name="pet_size_slider" />
+    <item type="id" name="pet_size_value" />
+</resources>

@@ -57,8 +57,12 @@ internal class PetOverlayService : Service() {
     private var foreground = false
     private var screenReceiverRegistered = false
     private lateinit var mainHandler: Handler
-    private val selectionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == SkinStore.SELECTED_ID && !destroyed) loadSprite()
+    private val preferencesListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (destroyed) return@OnSharedPreferenceChangeListener
+        when (key) {
+            SkinStore.SELECTED_ID -> loadSprite()
+            SkinStore.OVERLAY_SIZE_PERCENT -> resizeOverlay()
+        }
     }
     private val clearBubble = Runnable { bubble?.visibility = View.INVISIBLE }
     private val dismissMenu = Runnable { closeMenu?.visibility = View.GONE }
@@ -142,7 +146,7 @@ internal class PetOverlayService : Service() {
         manager = overlayContext.getSystemService(WindowManager::class.java)
 
         layout = WindowManager.LayoutParams(
-            dp(132), dp(152),
+            0, 0,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
@@ -153,7 +157,6 @@ internal class PetOverlayService : Service() {
         }
 
         if (Build.VERSION.SDK_INT >= 30) layout.setFitInsetsTypes(0)
-        applySavedPosition()
 
         val panel = FrameLayout(overlayContext)
         val sprite = PetSpriteView(overlayContext).apply {
@@ -166,7 +169,7 @@ internal class PetOverlayService : Service() {
             }
             setOnLongClickListener { showCloseMenu() }
         }
-        panel.addView(sprite, FrameLayout.LayoutParams(dp(122), dp(120), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+        panel.addView(sprite, FrameLayout.LayoutParams(0, 0, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         installGestures(sprite)
 
         val dialogue = TextView(overlayContext).apply {
@@ -208,6 +211,7 @@ internal class PetOverlayService : Service() {
                 app.overlayStatus = OverlayStatus.RUNNING
             }
         }
+        applySavedLayout(sprite)
         manager.addView(panel, layout)
         root = panel
         pet = sprite
@@ -224,7 +228,7 @@ internal class PetOverlayService : Service() {
         getSystemService(AppOpsManager::class.java)
             .startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, permissionListener)
         watching = true
-        store.prefs.registerOnSharedPreferenceChangeListener(selectionListener)
+        store.prefs.registerOnSharedPreferenceChangeListener(preferencesListener)
     }
 
     private fun loadSprite() {
@@ -348,10 +352,7 @@ internal class PetOverlayService : Service() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        root?.post {
-            applySavedPosition()
-            updateWindow()
-        }
+        root?.post { resizeOverlay() }
     }
 
     @Suppress("DEPRECATION")
@@ -369,8 +370,35 @@ internal class PetOverlayService : Service() {
         return Rect(0, dp(28), size.x, size.y)
     }
 
-    private fun applySavedPosition() {
+    private fun resizeOverlay() {
+        applySavedLayout(pet ?: return)
+        updateWindow()
+    }
+
+    private fun applySavedLayout(sprite: PetSpriteView) {
         val area = bounds()
+        val widthLimit = area.width().coerceAtLeast(1)
+        val heightLimit = area.height().coerceAtLeast(1)
+        val sideSpace = dp(10).coerceAtMost(widthLimit - 1)
+        val topSpace = dp(32).coerceAtMost(heightLimit - 1)
+        val baseWidth = dp(122)
+        val baseHeight = dp(120)
+        val scale = minOf(
+            store.overlaySizePercent / 100f,
+            (widthLimit - sideSpace).toFloat() / baseWidth,
+            (heightLimit - topSpace).toFloat() / baseHeight,
+        )
+        val width = (baseWidth * scale).roundToInt().coerceIn(1, widthLimit - sideSpace)
+        val height = (baseHeight * scale).roundToInt().coerceIn(1, heightLimit - topSpace)
+        val params = sprite.layoutParams
+        if (params.width != width || params.height != height) {
+            params.width = width
+            params.height = height
+            sprite.layoutParams = params
+        }
+        layout.width = maxOf(width + sideSpace, dp(112)).coerceAtMost(widthLimit)
+        layout.height = height + topSpace
+
         val usableX = (area.width() - layout.width).coerceAtLeast(0)
         val usableY = (area.height() - layout.height).coerceAtLeast(0)
         layout.x = area.left + (usableX * store.prefs.getFloat("petX", .72f)).roundToInt()
@@ -397,7 +425,7 @@ internal class PetOverlayService : Service() {
             fail(OverlayStatus.NEEDS_PERMISSION)
             return
         }
-        applySavedPosition()
+        applySavedLayout(pet ?: return)
         view.visibility = View.VISIBLE
         updateWindow()
         scheduleFirstFrameTimeout()
@@ -442,7 +470,7 @@ internal class PetOverlayService : Service() {
         destroyed = true
         mainHandler.removeCallbacksAndMessages(null)
         if (watching) {
-            store.prefs.unregisterOnSharedPreferenceChangeListener(selectionListener)
+            store.prefs.unregisterOnSharedPreferenceChangeListener(preferencesListener)
             getSystemService(AppOpsManager::class.java).stopWatchingMode(permissionListener)
         }
         if (screenReceiverRegistered) unregisterReceiver(screenChanges)

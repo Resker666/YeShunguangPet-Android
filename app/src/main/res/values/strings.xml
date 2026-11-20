@@ -4,4 +4,6 @@
     <string name="notification_title">口袋宠物正在陪伴你</string>
     <string name="notification_body">点按返回应用，或直接收起宠物</string>
     <string name="stop_pet">收起宠物</string>
+    <string name="pet_size">角色大小</string>
+    <string name="pet_size_value">%1$d%%</string>
 </resources>

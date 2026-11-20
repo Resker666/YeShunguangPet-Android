@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -19,6 +20,7 @@ import android.view.View
 import android.view.WindowInsets
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import kotlin.math.roundToInt
 
@@ -138,6 +140,7 @@ internal class MainActivity : Activity() {
         overlayCard.append(overlayState)
         overlayButton = button("", primary = true) { toggleOverlay() }
         overlayCard.append(overlayButton, 11)
+        overlayCard.append(buildSizeControl(), 15)
         recallButton = button("找回角色", primary = false) {
             if (app.overlayStatus == OverlayStatus.RUNNING) {
                 startService(Intent(overlayIntent).setAction(PetOverlayService.RECALL))
@@ -160,6 +163,47 @@ internal class MainActivity : Activity() {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
         }
         body.append(message, 12)
+    }
+
+    private fun buildSizeControl(): LinearLayout {
+        val initial = store.overlaySizePercent
+        val value = text(getString(R.string.pet_size_value, initial), 14, TEAL, bold = true).apply {
+            id = R.id.pet_size_value
+        }
+        val title = text(getString(R.string.pet_size), 14, BRIGHT_MUTED, bold = true).apply {
+            labelFor = R.id.pet_size_slider
+        }
+        val labels = LinearLayout(this).apply {
+            addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(value, LinearLayout.LayoutParams(-2, -2))
+        }
+        val slider = SeekBar(this).apply {
+            id = R.id.pet_size_slider
+            max = (SkinStore.MAX_OVERLAY_SIZE - SkinStore.MIN_OVERLAY_SIZE) / SIZE_STEP
+            progress = (initial - SkinStore.MIN_OVERLAY_SIZE) / SIZE_STEP
+            keyProgressIncrement = 1
+            minimumHeight = dp(44)
+            progressTintList = ColorStateList.valueOf(TEAL)
+            thumbTintList = ColorStateList.valueOf(TEAL)
+            if (Build.VERSION.SDK_INT >= 30) stateDescription = value.text
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                    if (!fromUser) return
+                    val percent = SkinStore.MIN_OVERLAY_SIZE + progress * SIZE_STEP
+                    value.text = getString(R.string.pet_size_value, percent)
+                    if (Build.VERSION.SDK_INT >= 30) seekBar.stateDescription = value.text
+                    store.overlaySizePercent = percent
+                }
+
+                override fun onStartTrackingTouch(seekBar: SeekBar) = Unit
+                override fun onStopTrackingTouch(seekBar: SeekBar) = Unit
+            })
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            append(labels)
+            append(slider)
+        }
     }
 
     private fun reload() {
@@ -399,6 +443,7 @@ internal class MainActivity : Activity() {
         private const val IMPORT_SKIN = 10
         private const val OVERLAY_PERMISSION = 11
         private const val NOTIFICATION_PERMISSION = 12
+        private const val SIZE_STEP = 5
         private val BACKGROUND = 0xFF101722.toInt()
         private val CARD = 0xFF182332.toInt()
         private val SELECTED = 0xFF223940.toInt()

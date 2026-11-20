@@ -35,6 +35,12 @@ internal data class ImportedSkin(val skin: Skin, val alreadyInstalled: Boolean)
 internal class SkinStore(private val context: Context) {
     private val root = File(context.filesDir, "skins").apply { mkdirs() }
     val prefs = context.getSharedPreferences("pet", Context.MODE_PRIVATE)
+    var overlaySizePercent: Int
+        get() = prefs.getInt(OVERLAY_SIZE_PERCENT, 100).coerceIn(MIN_OVERLAY_SIZE, MAX_OVERLAY_SIZE)
+        set(value) {
+            val percent = value.coerceIn(MIN_OVERLAY_SIZE, MAX_OVERLAY_SIZE)
+            if (overlaySizePercent != percent) prefs.edit().putInt(OVERLAY_SIZE_PERCENT, percent).apply()
+        }
     private val starter by lazy {
         Skin(context.assets.open("starter/pet.json").use(::readManifest))
     }
@@ -130,5 +136,8 @@ internal class SkinStore(private val context: Context) {
     }
     companion object {
         const val SELECTED_ID = "selected"
+        const val OVERLAY_SIZE_PERCENT = "overlaySizePercent"
+        const val MIN_OVERLAY_SIZE = 50
+        const val MAX_OVERLAY_SIZE = 200
     }
 }
