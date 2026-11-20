@@ -34,6 +34,7 @@ internal class MainActivity : Activity() {
     private lateinit var overlayState: TextView
     private lateinit var overlayButton: TextView
     private lateinit var recallButton: TextView
+    private lateinit var gestureHint: TextView
     private lateinit var importButton: TextView
     private lateinit var message: TextView
     private lateinit var library: LinearLayout
@@ -143,6 +144,8 @@ internal class MainActivity : Activity() {
             }
         }
         overlayCard.append(recallButton, 8)
+        gestureHint = text("轻点角色互动，长按可收起", 12, MUTED).apply { gravity = Gravity.CENTER }
+        overlayCard.append(gestureHint, 8)
         updateOverlayState()
 
         val skinHeading = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -271,7 +274,9 @@ internal class MainActivity : Activity() {
             OverlayStatus.STARTING -> "取消开启"
             else -> "开启悬浮宠物"
         }
-        recallButton.visibility = if (status == OverlayStatus.RUNNING) View.VISIBLE else View.GONE
+        val running = status == OverlayStatus.RUNNING
+        recallButton.visibility = if (running) View.VISIBLE else View.GONE
+        gestureHint.visibility = if (running) View.VISIBLE else View.GONE
     }
 
     private fun openPicker() {

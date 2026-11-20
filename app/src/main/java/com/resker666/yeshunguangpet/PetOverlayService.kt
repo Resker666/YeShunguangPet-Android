@@ -13,12 +13,14 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.pm.ServiceInfo
+import android.content.res.ColorStateList
 import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Point
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
@@ -34,7 +36,7 @@ import android.view.ViewConfiguration
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
-import android.widget.ImageButton
+import android.widget.Button
 import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -47,6 +49,7 @@ internal class PetOverlayService : Service() {
     private lateinit var layout: WindowManager.LayoutParams
     private var root: FrameLayout? = null
     private var pet: PetSpriteView? = null
+    private var closeMenu: Button? = null
     private var bubble: TextView? = null
     private var watching = false
     private var generation = 0
@@ -58,6 +61,7 @@ internal class PetOverlayService : Service() {
         if (key == SkinStore.SELECTED_ID && !destroyed) loadSprite()
     }
     private val clearBubble = Runnable { bubble?.visibility = View.INVISIBLE }
+    private val dismissMenu = Runnable { closeMenu?.visibility = View.GONE }
     private val firstFrameTimeout = Runnable {
         if (app.overlayStatus == OverlayStatus.STARTING && root?.visibility == View.VISIBLE) {
             Log.w(TAG, "Pet overlay did not draw its first frame")
@@ -73,7 +77,10 @@ internal class PetOverlayService : Service() {
         override fun onReceive(context: Context, intent: Intent) {
             val unlocked = !getSystemService(KeyguardManager::class.java).isDeviceLocked
             when (intent.action) {
-                Intent.ACTION_SCREEN_OFF -> root?.visibility = View.INVISIBLE
+                Intent.ACTION_SCREEN_OFF -> {
+                    dismissMenu.run()
+                    root?.visibility = View.INVISIBLE
+                }
                 Intent.ACTION_USER_PRESENT -> updatePositionAndShow()
                 Intent.ACTION_SCREEN_ON -> if (unlocked) updatePositionAndShow()
             }
@@ -153,10 +160,14 @@ internal class PetOverlayService : Service() {
             isClickable = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             contentDescription = getString(R.string.app_name)
-            setOnClickListener { showLine(react()) }
+            setOnClickListener {
+                dismissMenu.run()
+                showLine(react())
+            }
+            setOnLongClickListener { showCloseMenu() }
         }
         panel.addView(sprite, FrameLayout.LayoutParams(dp(122), dp(120), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-        installDrag(sprite)
+        installGestures(sprite)
 
         val dialogue = TextView(overlayContext).apply {
             setTextColor(Color.WHITE)
@@ -169,14 +180,24 @@ internal class PetOverlayService : Service() {
         }
         panel.addView(dialogue, FrameLayout.LayoutParams(dp(94), dp(38), Gravity.TOP or Gravity.LEFT))
 
-        val close = ImageButton(overlayContext).apply {
-            setImageResource(R.drawable.ic_close)
-            contentDescription = getString(R.string.stop_pet)
-            background = rounded(0xE62B394A.toInt(), dp(15).toFloat())
-            setPadding(dp(6), dp(6), dp(6), dp(6))
+        val close = Button(overlayContext).apply {
+            text = getString(R.string.stop_pet)
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            minHeight = 0
+            minimumHeight = 0
+            setPadding(dp(10), 0, dp(10), 0)
+            background = RippleDrawable(
+                ColorStateList.valueOf(0x26FFFFFF),
+                rounded(0xFF263A52.toInt(), dp(13).toFloat()),
+                null,
+            )
+            backgroundTintList = null
+            visibility = View.GONE
             setOnClickListener { stopSelf() }
         }
-        panel.addView(close, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.TOP or Gravity.RIGHT))
+        panel.addView(close, FrameLayout.LayoutParams(dp(112), dp(44), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
 
         val interactive = getSystemService(PowerManager::class.java).isInteractive
         val locked = getSystemService(KeyguardManager::class.java).isDeviceLocked
@@ -191,6 +212,7 @@ internal class PetOverlayService : Service() {
         root = panel
         pet = sprite
         bubble = dialogue
+        closeMenu = close
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -250,7 +272,7 @@ internal class PetOverlayService : Service() {
     }
 
     @Suppress("ClickableViewAccessibility")
-    private fun installDrag(sprite: PetSpriteView) {
+    private fun installGestures(sprite: PetSpriteView) {
         val slop = ViewConfiguration.get(overlayContext).scaledTouchSlop
         var startX = 0f
         var startY = 0f
@@ -258,6 +280,12 @@ internal class PetOverlayService : Service() {
         var initialY = 0
         var previousX = 0f
         var dragging = false
+        var longPressed = false
+        val longPress = Runnable {
+            if (!dragging && sprite.isAttachedToWindow && sprite.isShown) {
+                longPressed = sprite.performLongClick()
+            }
+        }
         sprite.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -267,12 +295,17 @@ internal class PetOverlayService : Service() {
                     initialY = layout.y
                     previousX = startX
                     dragging = false
+                    longPressed = false
+                    sprite.removeCallbacks(longPress)
+                    sprite.postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - startX
                     val dy = event.rawY - startY
-                    if (dragging || abs(dx) > slop || abs(dy) > slop) {
+                    if (!longPressed && (dragging || abs(dx) > slop || abs(dy) > slop)) {
+                        sprite.removeCallbacks(longPress)
+                        if (!dragging) dismissMenu.run()
                         dragging = true
                         if (event.rawX != previousX) sprite.drag(event.rawX - previousX)
                         previousX = event.rawX
@@ -281,15 +314,27 @@ internal class PetOverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    sprite.removeCallbacks(longPress)
                     if (dragging) {
                         sprite.idle()
                         savePosition()
-                    } else if (event.actionMasked == MotionEvent.ACTION_UP) view.performClick()
+                    } else if (!longPressed && event.actionMasked == MotionEvent.ACTION_UP) {
+                        view.performClick()
+                    }
                     true
                 }
                 else -> true
             }
         }
+    }
+
+    private fun showCloseMenu(): Boolean {
+        val menu = closeMenu ?: return false
+        clearBubble.run()
+        menu.visibility = View.VISIBLE
+        mainHandler.removeCallbacks(dismissMenu)
+        mainHandler.postDelayed(dismissMenu, 6_000)
+        return true
     }
 
     private fun showLine(line: String?) {
@@ -406,6 +451,7 @@ internal class PetOverlayService : Service() {
         root = null
         pet = null
         bubble = null
+        closeMenu = null
         if (app.overlayStatus.active) app.overlayStatus = OverlayStatus.STOPPED
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()

@@ -36,6 +36,7 @@ internal class PetSpriteView(context: Context) : View(context) {
 
     fun show(sprite: Sprite?) {
         this.sprite = sprite
+        paint.isFilterBitmap = sprite?.skin?.directory != null
         alternateTap = false
         play("idle")
     }
