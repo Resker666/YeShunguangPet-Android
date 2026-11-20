@@ -12,9 +12,10 @@ import java.security.MessageDigest
 import java.util.concurrent.Executors
 
 internal enum class OverlayStatus {
-    STOPPED, STARTING, RUNNING, NEEDS_PERMISSION, WINDOW_ERROR, SPRITE_ERROR;
+    STOPPED, STARTING, RUNNING, PASSTHROUGH, NEEDS_PERMISSION, WINDOW_ERROR, SPRITE_ERROR;
 
-    val active: Boolean get() = this == STARTING || this == RUNNING
+    val running: Boolean get() = this == RUNNING || this == PASSTHROUGH
+    val active: Boolean get() = this == STARTING || running
 }
 
 internal class PetApplication : Application() {

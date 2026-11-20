@@ -8,4 +8,9 @@
     <string name="pet_size_value">%1$d%%</string>
     <string name="pet_size_decrease">缩小 1%</string>
     <string name="pet_size_increase">放大 1%</string>
+    <string name="enable_passthrough">开启穿透</string>
+    <string name="restore_interaction">恢复互动</string>
+    <string name="passthrough_enabled">悬浮穿透已开启</string>
+    <string name="notification_passthrough">穿透已开启，点「恢复互动」可拖动角色</string>
+    <string name="gesture_hint">轻点角色互动，长按开启穿透或收起</string>
 </resources>

@@ -35,6 +35,7 @@ internal class MainActivity : Activity() {
     private lateinit var heroCaption: TextView
     private lateinit var overlayState: TextView
     private lateinit var overlayButton: TextView
+    private lateinit var restoreButton: TextView
     private lateinit var recallButton: TextView
     private lateinit var gestureHint: TextView
     private lateinit var importButton: TextView
@@ -142,14 +143,20 @@ internal class MainActivity : Activity() {
         overlayCard.append(overlayState)
         overlayButton = button("", primary = true) { toggleOverlay() }
         overlayCard.append(overlayButton, 11)
+        restoreButton = button(getString(R.string.restore_interaction), primary = false) {
+            if (app.overlayStatus == OverlayStatus.PASSTHROUGH) {
+                startService(Intent(overlayIntent).setAction(PetOverlayService.RESTORE_INTERACTION))
+            }
+        }
+        overlayCard.append(restoreButton, 8)
         overlayCard.append(buildSizeControl(), 15)
         recallButton = button("找回角色", primary = false) {
-            if (app.overlayStatus == OverlayStatus.RUNNING) {
+            if (app.overlayStatus.running) {
                 startService(Intent(overlayIntent).setAction(PetOverlayService.RECALL))
             }
         }
         overlayCard.append(recallButton, 8)
-        gestureHint = text("轻点角色互动，长按可收起", 12, MUTED).apply { gravity = Gravity.CENTER }
+        gestureHint = text(getString(R.string.gesture_hint), 12, MUTED).apply { gravity = Gravity.CENTER }
         overlayCard.append(gestureHint, 8)
         updateOverlayState()
 
@@ -328,18 +335,19 @@ internal class MainActivity : Activity() {
             } else "切到其他应用时也能陪你"
             OverlayStatus.STARTING -> "正在显示宠物…"
             OverlayStatus.RUNNING -> "悬浮已开启"
+            OverlayStatus.PASSTHROUGH -> getString(R.string.passthrough_enabled)
             OverlayStatus.NEEDS_PERMISSION -> "请在系统设置中允许显示悬浮窗"
             OverlayStatus.WINDOW_ERROR -> "悬浮窗未能显示，请在此页重新开启"
             OverlayStatus.SPRITE_ERROR -> "当前皮肤无法显示，请在皮肤库切换角色"
         }
         overlayButton.text = when (status) {
-            OverlayStatus.RUNNING -> "收起悬浮宠物"
+            OverlayStatus.RUNNING, OverlayStatus.PASSTHROUGH -> "收起悬浮宠物"
             OverlayStatus.STARTING -> "取消开启"
             else -> "开启悬浮宠物"
         }
-        val running = status == OverlayStatus.RUNNING
-        recallButton.visibility = if (running) View.VISIBLE else View.GONE
-        gestureHint.visibility = if (running) View.VISIBLE else View.GONE
+        restoreButton.visibility = if (status == OverlayStatus.PASSTHROUGH) View.VISIBLE else View.GONE
+        recallButton.visibility = if (status.running) View.VISIBLE else View.GONE
+        gestureHint.visibility = if (status == OverlayStatus.RUNNING) View.VISIBLE else View.GONE
     }
 
     private fun openPicker() {

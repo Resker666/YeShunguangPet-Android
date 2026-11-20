@@ -11,6 +11,7 @@ ACTIVITY = f"{PACKAGE}/.MainActivity"
 WINDOW = "PocketPetOverlay"
 SPRITE_COLOR = bytes([99, 125, 250, 255])
 MENU_COLOR = bytes([38, 58, 82, 255])
+PASSTHROUGH_MENU_COLOR = bytes([37, 82, 74, 255])
 
 
 def adb(*args):
@@ -58,6 +59,24 @@ def tap_label(label):
 
 def tap_control(name):
     tap_node(wait_for(name, lambda: find_node("resource-id", f"{PACKAGE}:id/{name}")))
+
+
+def notification_restore(width, height):
+    def restore_action():
+        action = find_label("恢复互动")
+        if action:
+            return action
+        notification = find_label("口袋宠物正在陪伴你")
+        if notification:
+            _, top, _, bottom = node_bounds(notification)
+            y = (top + bottom) // 2
+            shell("input", "swipe", str(width // 2), str(y), str(width // 2),
+                  str(min(height - 5, y + 130)), "300")
+        return None
+
+    shell("cmd", "statusbar", "expand-notifications")
+    tap_node(wait_for("restore action in expanded notification", restore_action))
+    shell("cmd", "statusbar", "collapse")
 
 
 def screenshot():
@@ -199,9 +218,48 @@ def main(apk):
     time.sleep(0.7)
     (x, y, _), idle_frame = wait_for("large pet on Android Home", rendered_on_home)
 
-    shell("input", "swipe", str(x), str(y), str(x), str(y), "850")
-    menu_x, menu_y, _ = wait_for("menu after long press", lambda: color_region(MENU_COLOR, idle_frame, screenshot()))
-    shell("input", "tap", str(menu_x), str(menu_y))
+    def tap_pet_action(x, y, frame, color, action):
+        shell("input", "swipe", str(x), str(y), str(x), str(y), "850")
+        menu_x, menu_y, _ = wait_for(action, lambda: color_region(color, frame, screenshot()))
+        shell("input", "tap", str(menu_x), str(menu_y))
+
+    tap_pet_action(x, y, idle_frame, PASSTHROUGH_MENU_COLOR, "enable passthrough in pet menu")
+    time.sleep(0.4)
+    faded = screenshot()
+    offset = (y * width + x) * 4
+    assert has_window() and faded[1][offset:offset+4] != background[1][offset:offset+4], (
+        "The pet disappeared in passthrough mode"
+    )
+    assert sprite_pixel_count(faded, background) < sprite_pixel_count(idle_frame, background) / 2, (
+        "Passthrough did not apply the overlay opacity"
+    )
+
+    # Start on the visible sprite so this gesture must go through the overlay to Launcher3.
+    shell("input", "swipe", str(x), str(y), str(x), str(max(10, y - height // 3)), "300")
+    launcher_settings = wait_for("Settings icon in the launcher app drawer", lambda: find_label("Settings"))
+    tap_node(launcher_settings)
+    wait_for("Settings opened from its launcher icon", lambda: any(
+        "com.android.settings/" in line for line in shell("dumpsys", "activity", "activities").splitlines()
+        if "topResumedActivity" in line
+    ))
+    print("666% pet remained visible while a gesture passed through it to Launcher3 and opened Settings.", flush=True)
+
+    notification_restore(width, height)
+    shell("input", "keyevent", "KEYCODE_HOME")
+    (x, y, _), idle_frame = wait_for("full-opacity pet restored from notification", rendered_on_home)
+    print("Notification restored the pet's full opacity.", flush=True)
+
+    tap_pet_action(x, y, idle_frame, PASSTHROUGH_MENU_COLOR, "enable passthrough again after restoring interaction")
+    print("Long press worked again after restoring interaction from the notification.", flush=True)
+    shell("am", "start", "-W", "-n", ACTIVITY)
+    wait_for("passthrough state in settings", lambda: find_label("悬浮穿透已开启"))
+    tap_label("恢复互动")
+    wait_for("interaction restored in the app", lambda: find_label("悬浮已开启"))
+    print("The app's restore action also restored interaction.", flush=True)
+
+    shell("input", "keyevent", "KEYCODE_HOME")
+    (x, y, _), idle_frame = wait_for("interactive pet on Android Home", rendered_on_home)
+    tap_pet_action(x, y, idle_frame, MENU_COLOR, "stop the pet from the long-press menu")
     wait_for("the overlay window to be removed by the long-press menu", lambda: not has_window())
 
     shell("am", "start", "-W", "-n", ACTIVITY)

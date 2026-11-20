@@ -22,6 +22,7 @@ import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.hardware.display.DisplayManager
+import android.hardware.input.InputManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -37,6 +38,7 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Button
+import android.widget.LinearLayout
 import android.widget.TextView
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -49,7 +51,7 @@ internal class PetOverlayService : Service() {
     private lateinit var layout: WindowManager.LayoutParams
     private var root: FrameLayout? = null
     private var pet: PetSpriteView? = null
-    private var closeMenu: Button? = null
+    private var petMenu: LinearLayout? = null
     private var bubble: TextView? = null
     private var watching = false
     private var generation = 0
@@ -64,11 +66,16 @@ internal class PetOverlayService : Service() {
             SkinStore.OVERLAY_SIZE_PERCENT -> resizeOverlay()
         }
     }
-    private val settingsVisibilityChanged: () -> Unit = {
+    private val overlayModeChanged: () -> Unit = {
         if (root != null && applyInputMode()) updateWindow()
     }
+    private val passthroughAlpha: Float by lazy {
+        if (Build.VERSION.SDK_INT >= 31) {
+            minOf(0.8f, getSystemService(InputManager::class.java).maximumObscuringOpacityForTouch)
+        } else 0.8f
+    }
     private val clearBubble = Runnable { bubble?.visibility = View.INVISIBLE }
-    private val dismissMenu = Runnable { closeMenu?.visibility = View.GONE }
+    private val dismissMenu = Runnable { petMenu?.visibility = View.GONE }
     private val firstFrameTimeout = Runnable {
         if (app.overlayStatus == OverlayStatus.STARTING && root?.visibility == View.VISIBLE) {
             Log.w(TAG, "Pet overlay did not draw its first frame")
@@ -105,6 +112,7 @@ internal class PetOverlayService : Service() {
         when (intent?.action) {
             STOP, null -> stopSelf()
             RECALL -> recall()
+            RESTORE_INTERACTION -> restoreInteraction()
             START -> startOverlay()
         }
         return START_NOT_STICKY
@@ -170,7 +178,7 @@ internal class PetOverlayService : Service() {
                 dismissMenu.run()
                 showLine(react())
             }
-            setOnLongClickListener { showCloseMenu() }
+            setOnLongClickListener { showPetMenu() }
         }
         panel.addView(sprite, FrameLayout.LayoutParams(0, 0, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         installGestures(sprite)
@@ -186,24 +194,15 @@ internal class PetOverlayService : Service() {
         }
         panel.addView(dialogue, FrameLayout.LayoutParams(dp(94), dp(38), Gravity.TOP or Gravity.LEFT))
 
-        val close = Button(overlayContext).apply {
-            text = getString(R.string.stop_pet)
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            gravity = Gravity.CENTER
-            minHeight = 0
-            minimumHeight = 0
-            setPadding(dp(10), 0, dp(10), 0)
-            background = RippleDrawable(
-                ColorStateList.valueOf(0x26FFFFFF),
-                rounded(0xFF263A52.toInt(), dp(13).toFloat()),
-                null,
-            )
-            backgroundTintList = null
+        val menu = LinearLayout(overlayContext).apply {
+            orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            setOnClickListener { stopSelf() }
+            addView(menuButton(R.string.enable_passthrough, 0xFF25524A.toInt(), ::enablePassthrough),
+                LinearLayout.LayoutParams(-1, dp(44)))
+            addView(menuButton(R.string.stop_pet, 0xFF263A52.toInt()) { stopSelf() },
+                LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(4) })
         }
-        panel.addView(close, FrameLayout.LayoutParams(dp(112), dp(44), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        panel.addView(menu, FrameLayout.LayoutParams(dp(112), -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
 
         val interactive = getSystemService(PowerManager::class.java).isInteractive
         val locked = getSystemService(KeyguardManager::class.java).isDeviceLocked
@@ -222,7 +221,7 @@ internal class PetOverlayService : Service() {
         root = panel
         pet = sprite
         bubble = dialogue
-        closeMenu = close
+        petMenu = menu
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -235,7 +234,7 @@ internal class PetOverlayService : Service() {
             .startWatchingMode(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, packageName, permissionListener)
         watching = true
         store.prefs.registerOnSharedPreferenceChangeListener(preferencesListener)
-        app.overlayListeners.add(settingsVisibilityChanged)
+        app.overlayListeners.add(overlayModeChanged)
     }
 
     private fun loadSprite() {
@@ -342,8 +341,47 @@ internal class PetOverlayService : Service() {
         }
     }
 
-    private fun showCloseMenu(): Boolean {
-        val menu = closeMenu ?: return false
+    private fun menuButton(label: Int, color: Int, action: () -> Unit) = Button(overlayContext).apply {
+        text = getString(label)
+        setTextColor(Color.WHITE)
+        textSize = 13f
+        gravity = Gravity.CENTER
+        minHeight = 0
+        minimumHeight = 0
+        setPadding(dp(10), 0, dp(10), 0)
+        background = RippleDrawable(
+            ColorStateList.valueOf(0x26FFFFFF),
+            rounded(color, dp(11).toFloat()),
+            null,
+        )
+        backgroundTintList = null
+        setOnClickListener { action() }
+    }
+
+    private fun enablePassthrough() {
+        if (app.overlayStatus != OverlayStatus.RUNNING) return
+        dismissMenu.run()
+        clearBubble.run()
+        changeRunningMode(OverlayStatus.PASSTHROUGH)
+    }
+
+    private fun restoreInteraction() {
+        if (app.overlayStatus == OverlayStatus.PASSTHROUGH) {
+            changeRunningMode(OverlayStatus.RUNNING)
+        } else if (!foreground) {
+            stopSelf()
+        }
+    }
+
+    private fun changeRunningMode(status: OverlayStatus) {
+        app.overlayStatus = status
+        if (app.overlayStatus == status) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        }
+    }
+
+    private fun showPetMenu(): Boolean {
+        val menu = petMenu ?: return false
         clearBubble.run()
         menu.visibility = View.VISIBLE
         mainHandler.removeCallbacks(dismissMenu)
@@ -464,9 +502,14 @@ internal class PetOverlayService : Service() {
 
     private fun applyInputMode(): Boolean {
         val editingLargePet = app.settingsVisible && store.overlaySizePercent > 200
+        val passthrough = app.overlayStatus == OverlayStatus.PASSTHROUGH
         val flag = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        val flags = if (editingLargePet) layout.flags or flag else layout.flags and flag.inv()
-        val alpha = if (editingLargePet) 0.28f else 1f
+        val flags = if (editingLargePet || passthrough) layout.flags or flag else layout.flags and flag.inv()
+        val alpha = when {
+            editingLargePet -> 0.28f
+            passthrough -> passthroughAlpha
+            else -> 1f
+        }
         if (layout.flags == flags && layout.alpha == alpha) return false
         layout.flags = flags
         layout.alpha = alpha
@@ -498,21 +541,31 @@ internal class PetOverlayService : Service() {
             android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_close),
             getString(R.string.stop_pet), close,
         ).build()
-        return Notification.Builder(this, CHANNEL_ID)
+        val passthrough = app.overlayStatus == OverlayStatus.PASSTHROUGH
+        val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(getString(R.string.notification_title))
-            .setContentText(getString(R.string.notification_body))
+            .setContentText(getString(if (passthrough) R.string.notification_passthrough else R.string.notification_body))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .addAction(closeAction)
-            .build()
+        if (passthrough) {
+            val restore = PendingIntent.getService(this, 2,
+                Intent(this, PetOverlayService::class.java).setAction(RESTORE_INTERACTION),
+                PendingIntent.FLAG_IMMUTABLE)
+            val restoreAction = Notification.Action.Builder(
+                android.graphics.drawable.Icon.createWithResource(this, R.drawable.ic_notification),
+                getString(R.string.restore_interaction), restore,
+            ).build()
+            builder.addAction(restoreAction)
+        }
+        return builder.addAction(closeAction).build()
     }
 
     override fun onDestroy() {
         destroyed = true
         mainHandler.removeCallbacksAndMessages(null)
-        app.overlayListeners.remove(settingsVisibilityChanged)
+        app.overlayListeners.remove(overlayModeChanged)
         if (watching) {
             store.prefs.unregisterOnSharedPreferenceChangeListener(preferencesListener)
             getSystemService(AppOpsManager::class.java).stopWatchingMode(permissionListener)
@@ -523,7 +576,7 @@ internal class PetOverlayService : Service() {
         root = null
         pet = null
         bubble = null
-        closeMenu = null
+        petMenu = null
         if (app.overlayStatus.active) app.overlayStatus = OverlayStatus.STOPPED
         if (foreground) stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
@@ -539,6 +592,7 @@ internal class PetOverlayService : Service() {
     companion object {
         const val START = "pet.overlay.START"
         const val RECALL = "pet.overlay.RECALL"
+        const val RESTORE_INTERACTION = "pet.overlay.RESTORE_INTERACTION"
         private const val STOP = "pet.overlay.STOP"
         private const val CHANNEL_ID = "pet_overlay"
         private const val NOTIFICATION_ID = 101
