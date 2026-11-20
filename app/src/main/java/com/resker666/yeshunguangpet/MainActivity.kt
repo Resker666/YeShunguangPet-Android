@@ -182,7 +182,6 @@ internal class MainActivity : Activity() {
             max = (SkinStore.MAX_OVERLAY_SIZE - SkinStore.MIN_OVERLAY_SIZE) / SIZE_STEP
             progress = (initial - SkinStore.MIN_OVERLAY_SIZE) / SIZE_STEP
             keyProgressIncrement = 1
-            minimumHeight = dp(44)
             progressTintList = ColorStateList.valueOf(TEAL)
             thumbTintList = ColorStateList.valueOf(TEAL)
             if (Build.VERSION.SDK_INT >= 30) stateDescription = value.text
@@ -202,7 +201,7 @@ internal class MainActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             append(labels)
-            append(slider)
+            addView(slider, LinearLayout.LayoutParams(-1, dp(48)))
         }
     }
 

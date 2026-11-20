@@ -195,5 +195,13 @@ if __name__ == "__main__":
     try:
         main(sys.argv[1])
     except Exception:
+        try:
+            hierarchy = shell("cat", "/sdcard/pocket-pet-smoke.xml")
+            for node in ET.fromstring(hierarchy).iter("node"):
+                if node.get("text") or node.get("resource-id"):
+                    print(node.get("class"), node.get("text"), node.get("resource-id"),
+                          node.get("bounds"), file=sys.stderr)
+        except (subprocess.SubprocessError, ET.ParseError):
+            pass
         print(shell("logcat", "-d", "-s", "PetOverlay", "AndroidRuntime")[-9000:], file=sys.stderr)
         raise
